@@ -1,0 +1,3 @@
+finalTest, Maps/finalTest.png, -648, 42, -1070, 0, 0, 0
+no_map, None, 0, 42, 0, 0, 0, 0
+testMap01, Maps/test.png, 40, 42, 40, 0, 0, 0
