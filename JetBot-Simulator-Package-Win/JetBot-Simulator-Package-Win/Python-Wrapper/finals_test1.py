@@ -5,8 +5,10 @@ from time import perf_counter
 
 prev_time = perf_counter()
 WIDTH = 1280
+HEIGHT = 720
 HALF_WIDTH = 640
 STOP_FLAG = 0
+LAST_ROW_BIAS = -250 # +250 to 250 should be safely within boundry
 # KERNEL = np.ones((5,5),np.uint8)
 def execute(change):
     global prev_time,STOP_FLAG
@@ -18,8 +20,8 @@ def execute(change):
     red_frame = red_frame + cv2.inRange(hsv_frame, (0,50,20), (10,255,255))
     black_frame = cv2.inRange(hsv_frame,(0,0,0),(180,255,150))
     # print(red_frame.shape)
-    last_row = red_frame[-1,:]
-
+    last_row = red_frame[LAST_ROW_BIAS,:]
+    lateral_bias = -250
     left = -1
     best_len,mid = 0,-1
     for x,dot in enumerate(last_row):
@@ -31,7 +33,8 @@ def execute(change):
                 mid = (x+left)//2
         else:
             left = -1
-    mid_diff = abs(mid-HALF_WIDTH)/HALF_WIDTH
+    target = HALF_WIDTH+lateral_bias
+    mid_diff = abs(mid-target)/WIDTH
     if best_len == 0:
         robot.stop()
         STOP_FLAG = 5
@@ -39,21 +42,22 @@ def execute(change):
         STOP_FLAG -= 1
     else:
         robot.forward(0.2)
-        if mid > HALF_WIDTH+20:
+        if mid > target+20:
             robot.add_motor(0.05*mid_diff,-0.05*mid_diff)
-        elif mid < HALF_WIDTH-20:
+        elif mid < target-20:
             robot.add_motor(-0.05*mid_diff,0.05*mid_diff)
 
-    red_frame_out = cv2.cvtColor(red_frame,cv2.COLOR_GRAY2BGR)
+    red_frame_out = cv2.cvtColor(red_frame+black_frame,cv2.COLOR_GRAY2BGR)
     out_str = str(mid)
-    if mid > HALF_WIDTH:
+    if mid > target:
         out_str = "   " + out_str + ">>>"
-    elif mid < HALF_WIDTH:
+    elif mid < target:
         out_str = "<<<" + out_str + "   "
     else:
         out_str = "   " + out_str + "   "
-    cv2.rectangle(red_frame_out,(mid-10,700),(mid+10,720),(0,0,255),3)
-    cv2.putText(red_frame_out,out_str,(mid-75,680),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),1,cv2.LINE_AA)
+    cv2.rectangle(red_frame_out,(mid-10,HEIGHT+LAST_ROW_BIAS-20),(mid+10,HEIGHT+LAST_ROW_BIAS),(0,0,255),3)
+    cv2.rectangle(red_frame_out,(target-10,HEIGHT+LAST_ROW_BIAS-20),(target+10,HEIGHT+LAST_ROW_BIAS),(0,255,0),3)
+    cv2.putText(red_frame_out,out_str,(mid-75,HEIGHT+LAST_ROW_BIAS-40),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),1,cv2.LINE_AA)
     cv2.imshow("camera", red_frame_out)
 
     prev_time = curr_time
