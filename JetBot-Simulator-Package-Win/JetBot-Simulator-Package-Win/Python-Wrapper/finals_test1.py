@@ -6,9 +6,10 @@ from time import perf_counter
 prev_time = perf_counter()
 WIDTH = 1280
 HALF_WIDTH = 640
+STOP_FLAG = 0
 # KERNEL = np.ones((5,5),np.uint8)
 def execute(change):
-    global prev_time
+    global prev_time,STOP_FLAG
     curr_time = perf_counter()
     time_step = curr_time-prev_time
     curr_frame = change['new']
@@ -31,19 +32,23 @@ def execute(change):
         else:
             left = -1
     mid_diff = abs(mid-HALF_WIDTH)/HALF_WIDTH
-    robot.forward(0.2)
-    if mid > HALF_WIDTH+20:
-        # robot.right(0.05)
-        robot.add_motor(0.05*mid_diff,-0.05*mid_diff)
-    elif mid < HALF_WIDTH-20:
-        robot.add_motor(-0.05*mid_diff,0.05*mid_diff)
-        # robot.left(0.05)
+    if best_len == 0:
+        robot.stop()
+        STOP_FLAG = 5
+    elif STOP_FLAG > 0:
+        STOP_FLAG -= 1
+    else:
+        robot.forward(0.2)
+        if mid > HALF_WIDTH+20:
+            robot.add_motor(0.05*mid_diff,-0.05*mid_diff)
+        elif mid < HALF_WIDTH-20:
+            robot.add_motor(-0.05*mid_diff,0.05*mid_diff)
 
     red_frame_out = cv2.cvtColor(red_frame,cv2.COLOR_GRAY2BGR)
     out_str = str(mid)
-    if mid > HALF_WIDTH+20:
+    if mid > HALF_WIDTH:
         out_str = "   " + out_str + ">>>"
-    elif mid < HALF_WIDTH-20:
+    elif mid < HALF_WIDTH:
         out_str = "<<<" + out_str + "   "
     else:
         out_str = "   " + out_str + "   "
