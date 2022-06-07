@@ -18,10 +18,10 @@ argmax_x_end = 0
 argmax_y_start = 0
 argmax_y_end = 0
 
-CAMERA_HEIGHT = 10 # (hosin) height of the camera in centermeters
+OBSTACLE = False # (hosin) 
 
 def FindBox(frame): # (hosin)
-    global argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end
+    global argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end, OBSTACLE, FRAME_COUNTER
     small = cv2.resize(frame, (80,45))
     kernel = cv2.Mat(np.array([[0.1, 0.1, 0.1], [0.1, 0.2, 0.1], [0.1, 0.1, 0.1]]))
     filtered = cv2.filter2D(small, -1, kernel)
@@ -56,45 +56,53 @@ def FindBox(frame): # (hosin)
                 segmented[y][x] = [0,255,255]
                 obstacle_map[y][x] = 'O'
     #cv2.imshow('segmented', segmented)
-    heat_y = [-2 for y in range(30)]
+    yellow_y = [-3 for y in range(30)]
     accum_y = 0
     max_y = 0
     temp_start_y = 0
     for y in range(15, 45):
         obs_y = 0
+        black_y = [1 for y in range(81)]
         for x in range(80):
             if obstacle_map[y][x] == 'O':
                 obs_y += 1
             elif obstacle_map[y][x] == 'L':
                 obs_y -= 0.5
-        if obs_y > 5:
-            heat_y[y-15] = 1
-        accum_y += heat_y[y-15]
+                black_y[x+1] = black_y[x] * 2
+                if black_y[x+1] > 500:
+                    black_y[x+1] = 256
+        if obs_y > 5 or np.max(black_y) > np.power(2, y * 0.2 + 3):
+            yellow_y[y-15] = 1
+        accum_y += yellow_y[y-15]
         if accum_y < 0:
             accum_y = 0
-        if accum_y == heat_y[y-15]:
+        if accum_y == yellow_y[y-15]:
             temp_start_y = y
         if accum_y >= max_y:
             max_y = accum_y
             argmax_y_end = y
             argmax_y_start = temp_start_y
-    heat_x = [-2 for x in range(80)]
+    yellow_x = [-5 for x in range(80)]
     accum_x = 0
     max_x = 0
     temp_start_x = 0
     for x in range(80):
         obs_x = 0
+        black_x = [1 for x in range(31)]
         for y in range(15, 45):
             if obstacle_map[y][x] == 'O':
                 obs_x += 1
             elif obstacle_map[y][x] == 'L':
                 obs_x -= 0.2
-        if obs_x > 5:
-            heat_x[x] = 1
-        accum_x += heat_x[x]
+                black_x[y-14] = black_x[y-15] * 2
+                if black_x[y-14] > 100:
+                    black_x[y-14] = 64
+        if obs_x > 5 or np.max(black_x) > 50:
+            yellow_x[x] = 1
+        accum_x += yellow_x[x]
         if accum_x < 0:
             accum_x = 0
-        if accum_x == heat_x[x]:
+        if accum_x == yellow_x[x]:
             temp_start_x = x
         if accum_x >= max_x:
             max_x = accum_x
@@ -102,6 +110,21 @@ def FindBox(frame): # (hosin)
             argmax_x_start = temp_start_x
     cv2.rectangle(segmented, (argmax_x_start,argmax_y_start), (argmax_x_end,argmax_y_end), (255,0,0), 1)
     cv2.imwrite(str(FRAME_COUNTER) + '.png', segmented)
+    print(argmax_x_end, argmax_x_start, argmax_y_end, argmax_y_start)
+    area = (argmax_x_end - argmax_x_start) * (argmax_y_end - argmax_y_start)
+    if area > 25 and argmax_y_start >= 15 and argmax_x_end - argmax_x_start > argmax_y_start * 0.2 and argmax_y_end > argmax_y_start * 1.2:
+        whites = 0
+        for y in range(argmax_y_start, argmax_y_end):
+            for x in range(argmax_x_start, argmax_x_end):
+                if obstacle_map[y][x] == 'F':
+                    whites += 1
+        if whites > area / 2:
+            OBSTACLE = False
+        else:
+            OBSTACLE = True
+            print('obstacle at time ' + str(FRAME_COUNTER))
+    else:
+        OBSTACLE = False
     return
 
 class WindDown:
@@ -118,10 +141,10 @@ class WindDown:
         return out
 
 def execute(change):
-    global prev_time,STOP_FLAG, FRAME_COUNTER, argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end # (hosin)
+    global prev_time,STOP_FLAG, FRAME_COUNTER, argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end, OBSTACLE # (hosin)
     curr_time = perf_counter()
     time_step = curr_time-prev_time
-    FRAME_COUNTER += 1 # (hosin)
+    FRAME_COUNTER += 1
     curr_frame = change['new']
     if FRAME_COUNTER % 5 == 0: # (hosin)
         FindBox(deepcopy(curr_frame))
@@ -169,7 +192,8 @@ def execute(change):
         out_str = "   " + out_str + "   "
     cv2.rectangle(red_frame_out,(mid-10,HEIGHT+REFERENCE_ROW-20),(mid+10,HEIGHT+REFERENCE_ROW),(0,0,255),3)
     cv2.rectangle(red_frame_out,(target-10,HEIGHT+REFERENCE_ROW-20),(target+10,HEIGHT+REFERENCE_ROW),(0,255,0),3)
-    cv2.rectangle(red_frame_out, (argmax_x_start*16,argmax_y_start*16), (argmax_x_end*16,argmax_y_end*16), (255,0,0), 3) # (hosin)
+    if OBSTACLE:
+        cv2.rectangle(red_frame_out, (argmax_x_start*16,argmax_y_start*16), (argmax_x_end*16,argmax_y_end*16), (255,0,0), 3) # (hosin)
     cv2.putText(red_frame_out,out_str,(mid-75,HEIGHT+REFERENCE_ROW-40),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),1,cv2.LINE_AA)
     cv2.imshow("camera", red_frame_out)
     prev_time = curr_time
