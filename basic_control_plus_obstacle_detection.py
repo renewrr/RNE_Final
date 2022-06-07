@@ -121,7 +121,7 @@ def execute(change):
     global prev_time,STOP_FLAG, FRAME_COUNTER, argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end # (hosin)
     curr_time = perf_counter()
     time_step = curr_time-prev_time
-    FRAME_COUNTER += 1
+    FRAME_COUNTER += 1 # (hosin)
     curr_frame = change['new']
     if FRAME_COUNTER % 5 == 0: # (hosin)
         FindBox(deepcopy(curr_frame))
