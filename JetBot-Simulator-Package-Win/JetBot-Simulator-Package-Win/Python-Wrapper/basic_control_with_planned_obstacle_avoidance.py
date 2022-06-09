@@ -212,15 +212,19 @@ def execute(change):
             motion_plan.pop(0)
             motion_span.pop(0)
             motion_span[1] = perf_counter() - motion_init
-            motion_init = perf_counter()            
+            motion_init = perf_counter()
+        elif motion[2] == 'y distance to obstacle' and abs(GetMedian(red_frame, -300)[1] - HALF_WIDTH) / WIDTH > 0.25:
+            print('--- rolling stopped early ---')
+            motion_plan.pop(0)
+            motion_span.pop(0)
+            motion_init = perf_counter()
         elif perf_counter() > motion_init + motion_span[0] or (motion[2] == 'deviate' and GetMedian(red_frame, 600)[1] - GetMedian(red_frame, 400)[1] > 300 and GetMedian(red_frame, 650)[0] == 0):
-            if motion[2] == 'back and straight' and (perf_counter() > motion_init + 5 or abs(GetMedian(red_frame, -200)[1] - HALF_WIDTH) / WIDTH > 0.3):
+            if motion[2] == 'back and straight' and (perf_counter() > motion_init + 5 or abs(GetMedian(red_frame, -300)[1] - HALF_WIDTH) / WIDTH > 0.3):
                 motion_span[1] = 0.5
-                print('--- cut ---')
-            else:
-                motion_plan.pop(0)
-                motion_span.pop(0)
-                motion_init = perf_counter()
+                print('--- roll time cut to 0.5 ---')
+            motion_plan.pop(0)
+            motion_span.pop(0)
+            motion_init = perf_counter()
         if len(motion_plan) == 0:
             HANDLER_MODE = False
             print('\nexit handler mode at time ' + str(FRAME_COUNTER))
@@ -241,6 +245,8 @@ def execute(change):
         out_str = "<<<" + out_str + "   "
     else:
         out_str = "   " + out_str + "   "
+    if HANDLER_MODE:
+        out_str = str(motion)
     cv2.rectangle(red_frame_out,(mid-10,HEIGHT+REFERENCE_ROW-20),(mid+10,HEIGHT+REFERENCE_ROW),(0,0,255),3)
     cv2.rectangle(red_frame_out,(target-10,HEIGHT+REFERENCE_ROW-20),(target+10,HEIGHT+REFERENCE_ROW),(0,255,0),3)
     if OBSTACLE and FRAME_COUNTER % 2 == 0:
