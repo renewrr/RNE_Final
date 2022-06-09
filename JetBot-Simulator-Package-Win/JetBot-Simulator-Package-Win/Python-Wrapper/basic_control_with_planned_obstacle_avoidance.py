@@ -20,9 +20,11 @@ argmax_y_start = -1
 argmax_y_end = -1
 obs_history = 0
 handler_history = 0
+visibility = -1
 
 OBSTACLE = False 
 HANDLER_MODE = False
+PARKING_MODE = False
 
 def GetMedian(frame, ref_row): # Find the geometric median of the largest red patch in the referenced row
     left = -1
@@ -38,14 +40,48 @@ def GetMedian(frame, ref_row): # Find the geometric median of the largest red pa
             left = -1
     return best_len, mid
 
-def FindBox(frame): # (hosin)
+def FeaturePoints(image): # count number of feature points to find parking line
+    frame = cv2.resize(image, (144,256))[60:, :]
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    black_frame = cv2.inRange(frame,(0,0,0),(180,255,150))
+    kernel = np.ones((7,7),np.uint8)
+    black_frame = cv2.erode(black_frame, kernel, iterations = 1)
+    gray = np.float32(black_frame)
+    harris_corners = cv2.cornerHarris(gray, 5, 5, 0.05)
+    kernel = np.ones((5,5),np.uint8)
+    harris_corners = cv2.dilate(harris_corners, kernel, iterations = 2)
+    return np.count_nonzero(harris_corners)
+
+def Visibility(obstacle_map, y_start=15, y_end=45): # visibility decides how fast car can run
+    visibility = 0
+    for y in range(y_start, y_end):
+        spots = np.where(np.array(obstacle_map[y]) == 'R')[0]
+        visibility += min(5, max(0, np.sum([(3.25 - y * 0.05) * (x * x * (125/3) + x * (-27.5) + 29/6) for x in spots])))
+    if y_start == y_end - 1:
+        if len(spots) == 0:
+            spots = [0]
+        return visibility, np.average(spots)
+    return visibility
+
+def RedGone(obstacle_map): # check occurence of red points in the frontal visual field
+    for x in range(80):
+        for y in range(15, 45):
+            mask = (abs(x - 40) / 80) * (abs(x - 40) / 80) * (-36.6) + (abs(x - 40) / 80) * (-5.9) + 40
+            if y > mask:
+                continue
+            else:
+                if obstacle_map[y][x] == 'R':
+                    return False
+    return True
+
+def FindBox(frame): # crop the obstacle out
     global argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end, OBSTACLE, FRAME_COUNTER, obs_history
     small = cv2.resize(frame, (80,45))
     kernel = cv2.Mat(np.array([[0.1, 0.1, 0.1], [0.1, 0.2, 0.1], [0.1, 0.1, 0.1]]))
     filtered = cv2.filter2D(small, -1, kernel)
-    segmented = filtered.copy()
+    segmented = np.zeros((45, 80, 3), dtype = "uint8")
     obstacle_map = [[None for x in range(80)] for y in range(45)]
-    for y in range(45):
+    for y in range(15, 45):
         for x in range(80):
             pixel = filtered[y][x]
             blue = int(pixel[0])
@@ -150,18 +186,20 @@ def FindBox(frame): # (hosin)
             obs_history = 0
     else:
         OBSTACLE = False
-    return
+    return obstacle_map
 
 def execute(change):
-    global prev_time, STOP_FLAG, FRAME_COUNTER, argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end, GOAL, OBSTACLE, HANDLER_MODE, motion_plan, motion_span, motion_init, obs_history, handler_history # (hosin)
+    global prev_time, STOP_FLAG, FRAME_COUNTER, argmax_x_start, argmax_x_end, argmax_y_start, argmax_y_end, GOAL, OBSTACLE, HANDLER_MODE, PARKING_MODE, visibility, motion_plan, motion_span, motion_init, obs_history, handler_history # (hosin)
     if GOAL:
+        robot.stop()
         return
     curr_time = perf_counter()
     time_step = curr_time-prev_time
     FRAME_COUNTER += 1
     curr_frame = change['new']
-    if FRAME_COUNTER % 2 == 0: # (hosin)
-        FindBox(deepcopy(curr_frame))
+    if FRAME_COUNTER % 2 == 0 and not PARKING_MODE: # (hosin)
+        obstacle_map = FindBox(deepcopy(curr_frame))
+        visibility = Visibility(obstacle_map)
     hsv_frame = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2HSV) #Use HSV instead of BGR for easier color filtration
     red_frame = cv2.inRange(hsv_frame, (160, 50, 20), (180, 255, 255))
     red_frame = red_frame + cv2.inRange(hsv_frame, (0,50,20), (10,255,255)) #Filter out non-red colors, since red~orange spans from hue 0~20 and 160~180, a two step process is needed
@@ -169,13 +207,13 @@ def execute(change):
     ref_row = red_frame[REFERENCE_ROW,:] #Referenced row for red line tracking
     best_len, mid = GetMedian(red_frame, REFERENCE_ROW)
     target = HALF_WIDTH
+    print('\nfeature points: ', FeaturePoints(curr_frame))
 
-    if handler_history > 10 and not HANDLER_MODE and GetMedian(red_frame, -100)[0] == 0: # Stop the robot instantly if we can't detect the red reference line
-        print('\nenter parking area at time ' + str(FRAME_COUNTER))
-        robot.stop()
-        GOAL = True
-        return
-    if not HANDLER_MODE and OBSTACLE and best_len > 0:
+    if FRAME_COUNTER % 2 == 0 and handler_history > 5 and not HANDLER_MODE and not PARKING_MODE and (FeaturePoints(curr_frame) > 4000 or RedGone(obstacle_map)):
+        print('\nfeature points: ', FeaturePoints(curr_frame))
+        print('enter parking area at time ' + str(FRAME_COUNTER))
+        PARKING_MODE = True
+    elif not HANDLER_MODE and not PARKING_MODE and OBSTACLE and best_len > 0:
         HANDLER_MODE = True
         print('\n\nenter handler mode at time ' + str(FRAME_COUNTER))
         target = (argmax_x_start + argmax_x_end) * 8 # center of obstacle
@@ -207,7 +245,7 @@ def execute(change):
         handler_history = 0
         motion = motion_plan[0]
         robot.set_motor(motion[0], motion[1])
-        print(FRAME_COUNTER, '--- handler: ',  str(motion), 't = ', perf_counter())
+        print(FRAME_COUNTER, '--- handler: ',  str(motion), 't = ', round(perf_counter(), 3))
         if motion[2] == 'no obstacle' and not OBSTACLE and obs_history > 2:
             motion_plan.pop(0)
             motion_span.pop(0)
@@ -227,15 +265,49 @@ def execute(change):
             motion_init = perf_counter()
         if len(motion_plan) == 0:
             HANDLER_MODE = False
-            print('\nexit handler mode at time ' + str(FRAME_COUNTER))
+            print('\nexit handler mode at time: ' + str(FRAME_COUNTER))
     else:
-        mid_diff = min(0.05, abs(mid - HALF_WIDTH) / WIDTH / 10)
-        robot.forward(0.05)
-        if mid > target + 20: #Proportion controller
-            robot.add_motor(0.025*mid_diff,-0.025*mid_diff)
-        elif mid < target - 20:
-            robot.add_motor(-0.025*mid_diff,0.025*mid_diff)
-        print('guiding mode', mid_diff)
+        if PARKING_MODE:
+            feature_points = FeaturePoints(curr_frame)
+            print('\nfeature points: ', feature_points)
+            obstacle_map = FindBox(deepcopy(curr_frame))
+            mid_diff = 'none'
+            for y in range(30, 45):
+                visibility, center = Visibility(obstacle_map, y, y + 1)
+                if visibility > 0:
+                    x = abs(center - 40) / 80
+                    robot.forward(max(0, 0.02 - x * 0.2))
+                    inv_slope = (center - Visibility(obstacle_map, y, y + 1)[1]) / (44.1 - y)
+                    mid_diff = min(0.1, max(0.01, x / 2)) # rotate to make straight
+                    break
+            if feature_points > 7000:
+                robot.stop()
+            if mid_diff == 'none':
+                GOAL = True
+                robot.forward(0.5) # final rush
+                print('visibility: ', Visibility(obstacle_map))
+                print('--- stop ---')
+                return
+            if inv_slope > 0.2: 
+                robot.add_motor(0.05*mid_diff,-0.05*mid_diff)
+            elif inv_slope < -0.2:
+                robot.add_motor(-0.05*mid_diff,0.05*mid_diff)
+            elif center * 16 > HALF_WIDTH + 30: #Proportion controller
+                robot.add_motor(0.05*mid_diff,-0.05*mid_diff)
+            elif center * 16 < HALF_WIDTH - 30:
+                robot.add_motor(-0.05*mid_diff,0.05*mid_diff)
+            else:
+                robot.set_motor(0.01,0.01)
+            print('parking mode at time: ', str(FRAME_COUNTER))
+            print(round(mid_diff, 6), round(visibility, 2), round(center * 16, 0), x)
+        else:
+            mid_diff = min(0.05, abs(mid - HALF_WIDTH) / WIDTH / 10)
+            print('guiding mode', round(mid_diff, 6), round(visibility, 2))
+            robot.forward(min(0.05, max(visibility * 0.0005 - 0.025, visibility / 600 - 0.0667)))
+            if mid > target + 20: #Proportion controller
+                robot.add_motor(0.025*mid_diff,-0.025*mid_diff)
+            elif mid < target - 20:
+                robot.add_motor(-0.025*mid_diff,0.025*mid_diff)
 
     red_frame_out = cv2.cvtColor(red_frame+black_frame,cv2.COLOR_GRAY2BGR)
     out_str = str(mid)
